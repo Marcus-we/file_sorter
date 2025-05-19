@@ -1,0 +1,8 @@
+scikit-learn>=1.0.2
+numpy>=1.22.0
+pillow>=9.0.0
+tqdm>=4.64.0
+click>=8.0.0
+# Optional, add if needed:
+# matplotlib>=3.5.0
+# gensim>=4.1.2  # Alternative to transformers for text analysis 
