@@ -3,6 +3,9 @@ numpy>=1.22.0
 pillow>=9.0.0
 tqdm>=4.64.0
 click>=8.0.0
+sentence-transformers>=2.2.2
+transformers>=4.30.0
+torch>=2.0.0
 # Optional, add if needed:
 # matplotlib>=3.5.0
 # gensim>=4.1.2  # Alternative to transformers for text analysis 

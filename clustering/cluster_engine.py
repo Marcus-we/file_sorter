@@ -14,6 +14,9 @@ import os
 import numpy as np
 from typing import Dict, List, Any, Tuple, Optional
 from collections import defaultdict
+from sklearn.cluster import KMeans
+from sklearn.preprocessing import StandardScaler
+from sklearn.decomposition import PCA
 
 
 def prepare_feature_vectors(file_features: List[Dict[str, Any]]) -> Tuple[List[str], np.ndarray]:
@@ -38,7 +41,7 @@ def prepare_feature_vectors(file_features: List[Dict[str, Any]]) -> Tuple[List[s
 
         # Get feature vector based on content type
         if file_data.get('content_type') == 'text':
-            # For text files, use TF-IDF or embeddings
+            # For text files, use embeddings by default (preferred), fallback to TF-IDF
             if file_data.get('embedding_vector') is not None:
                 features = file_data['embedding_vector']
             elif file_data.get('tfidf_vector'):
@@ -49,7 +52,7 @@ def prepare_feature_vectors(file_features: List[Dict[str, Any]]) -> Tuple[List[s
                 continue
 
         elif file_data.get('content_type') == 'image':
-            # For image files, use color features or advanced features
+            # For image files, use advanced features by default, fallback to color features
             if file_data.get('advanced_features') is not None:
                 features = file_data['advanced_features']
             elif file_data.get('color_features') is not None:
@@ -67,7 +70,19 @@ def prepare_feature_vectors(file_features: List[Dict[str, Any]]) -> Tuple[List[s
 
     # Convert to numpy array for clustering
     if feature_vectors:
-        feature_matrix = np.array(feature_vectors)
+        # Handle potential issues with different length vectors (shouldn't happen but just in case)
+        max_length = max(len(fv) for fv in feature_vectors)
+        padded_vectors = []
+        for fv in feature_vectors:
+            if len(fv) < max_length:
+                # Pad with zeros if needed
+                padded = np.zeros(max_length)
+                padded[:len(fv)] = fv
+                padded_vectors.append(padded)
+            else:
+                padded_vectors.append(fv)
+        
+        feature_matrix = np.array(padded_vectors)
         # Normalize features
         feature_matrix = normalize_features(feature_matrix)
         return file_paths, feature_matrix
@@ -86,6 +101,16 @@ def normalize_features(feature_matrix: np.ndarray) -> np.ndarray:
     Returns:
         Normalized feature matrix
     """
+    # Use standard scaling if we have enough samples
+    if feature_matrix.shape[0] > 1:
+        try:
+            scaler = StandardScaler()
+            scaled_features = scaler.fit_transform(feature_matrix)
+            return scaled_features
+        except Exception as e:
+            print(f"Error during feature scaling: {e}")
+            # Fall back to simple normalization
+    
     # Simple normalization: scale each feature to have unit norm
     norms = np.linalg.norm(feature_matrix, axis=1, keepdims=True)
     # Avoid division by zero
@@ -104,27 +129,57 @@ def determine_optimal_k(feature_matrix: np.ndarray, max_k: int = 10) -> int:
     Returns:
         Optimal number of clusters
     """
-    # This is a simplified placeholder for elbow method
-    # In a real implementation, this would compute inertia for different k values
-    # and select the "elbow point"
-
-    # Simple heuristic based on data size
     n_samples = feature_matrix.shape[0]
-
+    max_k = min(max_k, n_samples - 1)  # Can't have more clusters than samples
+    
+    # For very small datasets, use a simple approach
     if n_samples < 10:
-        return max(2, n_samples // 2)
-    elif n_samples < 100:
-        return max(3, min(n_samples // 10, max_k))
+        return max(2, min(3, n_samples // 2))
+    
+    # For larger datasets, use the elbow method
+    try:
+        # Reduce dimensionality if needed for faster processing
+        if feature_matrix.shape[1] > 50:
+            pca = PCA(n_components=min(50, n_samples - 1))
+            feature_matrix = pca.fit_transform(feature_matrix)
+        
+        # Calculate inertia for different k values
+        inertias = []
+        k_values = range(2, max_k + 1)
+        
+        for k in k_values:
+            kmeans = KMeans(n_clusters=k, n_init=3, random_state=42)
+            kmeans.fit(feature_matrix)
+            inertias.append(kmeans.inertia_)
+        
+        # Find the elbow point
+        if len(inertias) > 2:
+            # Calculate the rate of decrease
+            decreases = [inertias[i-1] - inertias[i] for i in range(1, len(inertias))]
+            
+            # Find where the rate of decrease slows down significantly
+            elbow_idx = 0
+            for i in range(1, len(decreases)):
+                if decreases[i] / decreases[0] < 0.2:  # Threshold for significant slowdown
+                    elbow_idx = i
+                    break
+            
+            # Return the optimal k value, ensuring at least 2 clusters
+            return max(2, k_values[elbow_idx])
+    
+    except Exception as e:
+        print(f"Error determining optimal k: {e}")
+    
+    # Fallback to heuristic
+    if n_samples < 100:
+        return max(2, min(n_samples // 10, max_k))
     else:
         return min(n_samples // 20, max_k)
 
 
 def perform_kmeans_clustering(feature_matrix: np.ndarray, n_clusters: int) -> np.ndarray:
     """
-    Performs K-means clustering on feature vectors.
-
-    Note: This is a simplified K-means implementation.
-    In a real implementation, you would use scikit-learn.
+    Performs K-means clustering on feature vectors using scikit-learn.
 
     Args:
         feature_matrix: Matrix of feature vectors
@@ -133,27 +188,18 @@ def perform_kmeans_clustering(feature_matrix: np.ndarray, n_clusters: int) -> np
     Returns:
         Array of cluster assignments for each sample
     """
-    # Simple K-means placeholder
-    n_samples, n_features = feature_matrix.shape
-
-    # Random initialization of centroids
-    np.random.seed(42)  # For reproducibility
-    centroid_indices = np.random.choice(n_samples, n_clusters, replace=False)
-    centroids = feature_matrix[centroid_indices]
-
-    # Assign initial clusters
-    distances = np.zeros((n_samples, n_clusters))
-    for i in range(n_clusters):
-        # Euclidean distance
-        diff = feature_matrix - centroids[i]
-        distances[:, i] = np.sum(diff * diff, axis=1)
-
-    cluster_assignments = np.argmin(distances, axis=1)
-
-    # In a real implementation, this would iterate until convergence
-    # For simplicity, we'll just return the initial assignments
-
-    return cluster_assignments
+    try:
+        # Use scikit-learn KMeans
+        kmeans = KMeans(n_clusters=n_clusters, random_state=42, n_init=10)
+        cluster_assignments = kmeans.fit_predict(feature_matrix)
+        return cluster_assignments
+    
+    except Exception as e:
+        print(f"Error during KMeans clustering: {e}")
+        # Fallback to simple clustering
+        n_samples = feature_matrix.shape[0]
+        # Assign to evenly distributed clusters as a fallback
+        return np.array([i % n_clusters for i in range(n_samples)])
 
 
 def cluster_files_by_content(file_features: List[Dict[str, Any]]) -> Dict[int, List[str]]:

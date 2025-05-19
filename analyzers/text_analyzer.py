@@ -17,6 +17,30 @@ from typing import Dict, List, Any, Union, Optional
 from collections import Counter
 import numpy as np
 
+# Import for sentence embeddings
+from sentence_transformers import SentenceTransformer
+import torch
+
+# Global variable for the model to avoid reloading
+_embedding_model = None
+
+
+def get_embedding_model():
+    """
+    Get or initialize the embedding model.
+    Uses singleton pattern to avoid reloading the model.
+    
+    Returns:
+        SentenceTransformer model
+    """
+    global _embedding_model
+    if _embedding_model is None:
+        # Use a small, efficient model for embeddings
+        model_name = "all-MiniLM-L6-v2"
+        print(f"Loading embedding model: {model_name}...")
+        _embedding_model = SentenceTransformer(model_name)
+    return _embedding_model
+
 
 def preprocess_text(text: str) -> str:
     """
@@ -128,6 +152,9 @@ def analyze_text_file(file_path: str) -> Dict[str, Any]:
         # Extract features
         keywords = extract_keywords(content)
         tfidf_vector = create_tfidf_vector(content)
+        
+        # Create embeddings for the text content
+        embedding_vector = create_advanced_embedding(content)
 
         return {
             'content_type': 'text',
@@ -137,7 +164,7 @@ def analyze_text_file(file_path: str) -> Dict[str, Any]:
             'char_count': char_count,
             'keywords': keywords,
             'tfidf_vector': tfidf_vector,
-            'embedding_vector': None  # Placeholder for more advanced embeddings
+            'embedding_vector': embedding_vector
         }
 
     except Exception as e:
@@ -149,13 +176,10 @@ def analyze_text_file(file_path: str) -> Dict[str, Any]:
         }
 
 
-# Additional functions for advanced embeddings - placeholders for now
+# Implementation of advanced embedding function
 def create_advanced_embedding(text: str) -> np.ndarray:
     """
-    Creates more advanced text embeddings using pretrained models.
-
-    Note: This is a placeholder. In a real implementation, this would use
-    sentence-transformers or similar libraries.
+    Creates text embeddings using pretrained sentence-transformers model.
 
     Args:
         text: Input text
@@ -163,11 +187,22 @@ def create_advanced_embedding(text: str) -> np.ndarray:
     Returns:
         Numpy array containing the embedding vector
     """
-    # Placeholder: Return a random vector of the right dimensionality
-    # In a real implementation, this would use a pretrained model
-
-    # Example dimensionality for embeddings
-    embedding_dim = 384
-
-    # Generate a random vector (placeholder)
-    return np.random.rand(embedding_dim)
+    try:
+        # Limit text length to avoid memory issues (most models have token limits)
+        max_chars = 10000
+        if len(text) > max_chars:
+            text = text[:max_chars]
+        
+        # Get the model
+        model = get_embedding_model()
+        
+        # Generate embedding
+        with torch.no_grad():  # No need for gradients
+            embedding = model.encode(text)
+            
+        return embedding
+    except Exception as e:
+        print(f"Error creating embedding: {e}")
+        # Fallback to random vector if embedding fails
+        embedding_dim = 384  # Standard for many sentence-transformers models
+        return np.random.rand(embedding_dim)

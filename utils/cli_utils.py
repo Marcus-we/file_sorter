@@ -65,21 +65,55 @@ def display_organization_plan(organization_policy: Dict[str, Any]) -> None:
     """
     print("\n===== File Organization Plan =====\n")
 
-    # This is a placeholder - will be implemented with actual policy data
-    print("The following categories will be created:")
+    # Check if we have a valid policy
+    if not organization_policy or 'categories' not in organization_policy:
+        print("No organization plan available.")
+        return
 
-    # Placeholder example categories
-    example_categories = {
-        "Documents": ["doc1.txt", "note.md"],
-        "Images": ["photo.jpg", "diagram.png"],
-    }
+    # Get base directory
+    base_dir = organization_policy.get('base_directory', 'organized_files')
+    print(f"Base directory: {base_dir}")
+    
+    # Get operation type
+    operation = "Copying" if organization_policy.get('copy_files', False) else "Moving"
+    total_files = organization_policy.get('total_files', 0)
+    print(f"{operation} {total_files} files into the following categories:\n")
 
-    for category, files in example_categories.items():
-        print(f"\n{category}:")
-        for file in files:
-            print(f"  - {file}")
+    # Display categories and sample files
+    categories = organization_policy.get('categories', {})
+    files_mapping = organization_policy.get('files_mapping', {})
+    
+    # Group files by category
+    category_files = {}
+    for src_path, dst_path in files_mapping.items():
+        # Find which category this file belongs to
+        for cat_id, cat_info in categories.items():
+            cat_dir = cat_info.get('directory', '')
+            if dst_path.startswith(cat_dir):
+                if cat_id not in category_files:
+                    category_files[cat_id] = []
+                category_files[cat_id].append((src_path, dst_path))
+                break
+    
+    # Display each category with sample files
+    for cat_id, cat_info in categories.items():
+        cat_name = cat_info.get('name', f"Category {cat_id}")
+        file_count = cat_info.get('file_count', 0)
+        print(f"{cat_name} ({file_count} files):")
+        
+        # Show sample files (up to 5)
+        if cat_id in category_files:
+            sample_files = category_files[cat_id][:5]
+            for src_path, _ in sample_files:
+                print(f"  - {os.path.basename(src_path)}")
+            
+            # Indicate if there are more files
+            if len(category_files[cat_id]) > 5:
+                print(f"  - ... and {len(category_files[cat_id]) - 5} more files")
+        
+        print()
 
-    print("\n==================================\n")
+    print("==================================\n")
 
 
 def get_user_confirmation() -> bool:

@@ -1,0 +1,41 @@
+# Python bytecode
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Distribution / packaging
+dist/
+build/
+*.egg-info/
+
+# Virtual environments
+venv/
+env/
+ENV/
+.env/
+
+# Project-specific output
+organized_files/
+test_data/
+output_dir/
+*.log
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+
+# Local configuration
+.python-version
+*.local.py
+
+# Test cache
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Generated files during development
+*.json
+!requirements.json 
