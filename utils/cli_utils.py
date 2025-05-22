@@ -52,6 +52,26 @@ def parse_args() -> argparse.Namespace:
         type=str,
         help="Output directory for organized files (default: creates subdirectory)"
     )
+    
+    parser.add_argument(
+        "--visualize",
+        action="store_true",
+        help="Generate a visualization of the clusters"
+    )
+    
+    parser.add_argument(
+        "--vis-method",
+        type=str,
+        choices=["tsne", "pca"],
+        default="tsne",
+        help="Method to use for dimensionality reduction in visualization (default: tsne)"
+    )
+    
+    parser.add_argument(
+        "--vis-output",
+        type=str,
+        help="Path to save the visualization image (default: temp file)"
+    )
 
     return parser.parse_args()
 

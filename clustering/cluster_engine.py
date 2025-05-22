@@ -5,8 +5,8 @@
 Cluster Engine
 
 This module implements clustering algorithms for file organization:
-- K-means clustering
-- Optimal cluster number determination
+- Hierarchical agglomerative clustering 
+- Parameter estimation for clustering
 - File-to-cluster assignment
 """
 
@@ -14,9 +14,10 @@ import os
 import numpy as np
 from typing import Dict, List, Any, Tuple, Optional
 from collections import defaultdict
-from sklearn.cluster import KMeans
+from sklearn.cluster import DBSCAN, AgglomerativeClustering
 from sklearn.preprocessing import StandardScaler
 from sklearn.decomposition import PCA
+from sklearn.neighbors import NearestNeighbors
 
 
 def prepare_feature_vectors(file_features: List[Dict[str, Any]]) -> Tuple[List[str], np.ndarray]:
@@ -118,44 +119,59 @@ def normalize_features(feature_matrix: np.ndarray) -> np.ndarray:
     return feature_matrix / norms
 
 
-def determine_optimal_k(feature_matrix: np.ndarray, max_k: int = 10) -> int:
+def estimate_cluster_count(feature_matrix: np.ndarray, is_image_data: bool = False) -> int:
     """
-    Determines the optimal number of clusters using the Elbow Method.
-
+    Estimates an appropriate number of clusters for hierarchical clustering.
+    
     Args:
         feature_matrix: Matrix of feature vectors
-        max_k: Maximum number of clusters to test
-
+        is_image_data: Whether this is image data (needs different cluster counts)
+        
     Returns:
-        Optimal number of clusters
+        Estimated number of clusters
     """
     n_samples = feature_matrix.shape[0]
-    max_k = min(max_k, n_samples - 1)  # Can't have more clusters than samples
     
-    # For very small datasets, use a simple approach
+    # For very small datasets, use simple heuristic
     if n_samples < 10:
-        return max(2, min(3, n_samples // 2))
+        return max(2, min(4, n_samples // 2))
     
-    # For larger datasets, use the elbow method
     try:
-        # Reduce dimensionality if needed for faster processing
+        # Use the elbow method to determine a good number of clusters
         if feature_matrix.shape[1] > 50:
+            # Reduce dimensionality for more stable calculation if needed
             pca = PCA(n_components=min(50, n_samples - 1))
             feature_matrix = pca.fit_transform(feature_matrix)
         
-        # Calculate inertia for different k values
-        inertias = []
-        k_values = range(2, max_k + 1)
+        # Calculate distances between points using Euclidean distance instead of cosine
+        from sklearn.metrics import pairwise_distances
+        distances = pairwise_distances(feature_matrix, metric='euclidean')
+        
+        # Calculate within-cluster sum of squares for different k values
+        wcss = []
+        max_k = min(10, n_samples // 2)  # Don't try too many clusters
+        k_values = range(1, max_k + 1)
         
         for k in k_values:
-            kmeans = KMeans(n_clusters=k, n_init=3, random_state=42)
-            kmeans.fit(feature_matrix)
-            inertias.append(kmeans.inertia_)
+            # Create temporary clustering
+            clustering = AgglomerativeClustering(n_clusters=k, linkage='ward')  # Ward linkage works well with Euclidean
+            labels = clustering.fit_predict(feature_matrix)
+            
+            # Calculate within-cluster sum of squares
+            wss = 0
+            for i in range(k):
+                cluster_indices = np.where(labels == i)[0]
+                if len(cluster_indices) > 1:
+                    # Calculate pairwise distances within this cluster
+                    cluster_distances = distances[np.ix_(cluster_indices, cluster_indices)]
+                    wss += np.sum(cluster_distances) / (2 * len(cluster_indices))
+            
+            wcss.append(wss)
         
-        # Find the elbow point
-        if len(inertias) > 2:
+        # Find the elbow point (if there are enough clusters to analyze)
+        if len(wcss) > 2:
             # Calculate the rate of decrease
-            decreases = [inertias[i-1] - inertias[i] for i in range(1, len(inertias))]
+            decreases = [wcss[i-1] - wcss[i] for i in range(1, len(wcss))]
             
             # Find where the rate of decrease slows down significantly
             elbow_idx = 0
@@ -163,43 +179,87 @@ def determine_optimal_k(feature_matrix: np.ndarray, max_k: int = 10) -> int:
                 if decreases[i] / decreases[0] < 0.2:  # Threshold for significant slowdown
                     elbow_idx = i
                     break
+                    
+            # Return the optimal k value
+            optimal_k = k_values[elbow_idx]
+        else:
+            # Default to a reasonable number of clusters
+            optimal_k = max(2, min(n_samples // 5, 5))
+        
+        # Adjust based on whether it's image data (image data usually has fewer natural clusters)
+        if is_image_data:
+            optimal_k = max(2, min(optimal_k, n_samples // 5))
+        else:
+            # Allow more clusters for text files by reducing the divisor
+            optimal_k = max(2, min(optimal_k, n_samples // 2))
             
-            # Return the optimal k value, ensuring at least 2 clusters
-            return max(2, k_values[elbow_idx])
-    
+        return optimal_k
+            
     except Exception as e:
-        print(f"Error determining optimal k: {e}")
-    
-    # Fallback to heuristic
-    if n_samples < 100:
-        return max(2, min(n_samples // 10, max_k))
-    else:
-        return min(n_samples // 20, max_k)
+        print(f"Error estimating cluster count: {e}")
+        # Fall back to a simple heuristic
+        if is_image_data:
+            return max(2, min(4, n_samples // 5))
+        else:
+            # Allow more clusters for text files by reducing the divisor
+            return max(2, min(10, n_samples // 3))
 
 
-def perform_kmeans_clustering(feature_matrix: np.ndarray, n_clusters: int) -> np.ndarray:
+def perform_hierarchical_clustering(feature_matrix: np.ndarray, n_clusters: int = None, is_image_data: bool = False) -> np.ndarray:
     """
-    Performs K-means clustering on feature vectors using scikit-learn.
-
+    Performs hierarchical clustering on feature vectors.
+    
     Args:
         feature_matrix: Matrix of feature vectors
-        n_clusters: Number of clusters
-
+        n_clusters: Number of clusters to form (if None, estimated automatically)
+        is_image_data: Whether this is image data
+        
     Returns:
         Array of cluster assignments for each sample
     """
-    try:
-        # Use scikit-learn KMeans
-        kmeans = KMeans(n_clusters=n_clusters, random_state=42, n_init=10)
-        cluster_assignments = kmeans.fit_predict(feature_matrix)
-        return cluster_assignments
+    n_samples = feature_matrix.shape[0]
     
+    # Special cases for very small datasets
+    if n_samples <= 1:
+        return np.zeros(n_samples)
+    elif n_samples <= 3:
+        # For very small datasets, put everything in one cluster
+        return np.zeros(n_samples)
+    
+    # Estimate cluster count if not provided
+    if n_clusters is None:
+        n_clusters = estimate_cluster_count(feature_matrix, is_image_data)
+    
+    # Ensure a reasonable number of clusters, but allow for more granularity with text files
+    if is_image_data:
+        n_clusters = min(n_clusters, max(2, n_samples // 2))
+    else:
+        # For text files, allow more clusters by using a smaller divisor
+        # Set a higher upper limit to allow for more logical grouping
+        n_clusters = min(n_clusters, max(2, min(20, n_samples // 2)))
+    
+    print(f"Performing hierarchical clustering with {n_clusters} clusters")
+    
+    try:
+        # Use Euclidean distance instead of cosine similarity to prevent text files from being grouped too closely
+        print("Using Euclidean distance for hierarchical clustering")
+        
+        # For text files, Euclidean distance often works better than cosine similarity
+        # as it prevents documents with similar word distributions but different lengths
+        # from being grouped together
+        clustering = AgglomerativeClustering(
+            n_clusters=n_clusters,
+            linkage='ward'  # Ward linkage works well with Euclidean distance
+        )
+        cluster_assignments = clustering.fit_predict(feature_matrix)
+        
+        print(f"Hierarchical clustering found {len(np.unique(cluster_assignments))} clusters")
+        return cluster_assignments
+        
     except Exception as e:
-        print(f"Error during KMeans clustering: {e}")
-        # Fallback to simple clustering
-        n_samples = feature_matrix.shape[0]
-        # Assign to evenly distributed clusters as a fallback
-        return np.array([i % n_clusters for i in range(n_samples)])
+        print(f"Error during hierarchical clustering: {e}")
+        # Ultimate fallback - all in one cluster
+        return np.zeros(n_samples)
 
 
 def cluster_files_by_content(file_features: List[Dict[str, Any]]) -> Dict[int, List[str]]:
@@ -221,14 +281,8 @@ def cluster_files_by_content(file_features: List[Dict[str, Any]]) -> Dict[int, L
         # Put everything in one cluster
         return {0: file_paths}
 
-    # Determine optimal number of clusters
-    n_clusters = determine_optimal_k(feature_matrix)
-    # Ensure we don't have too many clusters
-    n_clusters = min(n_clusters, len(file_paths) // 2 + 1)
-    n_clusters = max(2, n_clusters)  # Ensure at least 2 clusters
-
-    # Perform clustering
-    cluster_assignments = perform_kmeans_clustering(feature_matrix, n_clusters)
+    # Perform hierarchical clustering
+    cluster_assignments = perform_hierarchical_clustering(feature_matrix)
 
     # Group files by cluster
     clusters = defaultdict(list)
@@ -242,6 +296,8 @@ def cluster_files_by_content(file_features: List[Dict[str, Any]]) -> Dict[int, L
 def perform_clustering(file_features: List[Dict[str, Any]]) -> Dict[int, List[Dict[str, Any]]]:
     """
     Main clustering function that organizes files into groups.
+    For text files, uses hierarchical clustering.
+    For images, uses supervised classification from ResNet50.
 
     Args:
         file_features: List of file feature dictionaries from analyzers
@@ -257,14 +313,13 @@ def perform_clustering(file_features: List[Dict[str, Any]]) -> Dict[int, List[Di
     other_files = [f for f in file_features if f.get(
         'content_type') not in ('text', 'image') or 'error' in f]
 
-    # Cluster text files
+    # Cluster text files using hierarchical clustering
     text_clusters = {}
     if text_files:
         text_file_paths, text_features = prepare_feature_vectors(text_files)
         if len(text_file_paths) > 1:
-            n_clusters = determine_optimal_k(text_features)
-            text_assignments = perform_kmeans_clustering(
-                text_features, n_clusters)
+            # Use hierarchical clustering for text files
+            text_assignments = perform_hierarchical_clustering(text_features, is_image_data=False)
 
             # Map back to original file data
             text_path_to_data = {f['file_path']: f for f in text_files}
@@ -274,23 +329,39 @@ def perform_clustering(file_features: List[Dict[str, Any]]) -> Dict[int, List[Di
                     text_clusters[cluster_id] = []
                 text_clusters[cluster_id].append(text_path_to_data[path])
 
-    # Cluster image files
+    # For image files, use supervised classification instead of clustering
     image_clusters = {}
     if image_files:
-        image_file_paths, image_features = prepare_feature_vectors(image_files)
-        if len(image_file_paths) > 1:
-            n_clusters = determine_optimal_k(image_features)
-            image_assignments = perform_kmeans_clustering(
-                image_features, n_clusters)
-
-            # Map back to original file data
-            image_path_to_data = {f['file_path']: f for f in image_files}
-            for i, path in enumerate(image_file_paths):
-                # Offset for image clusters
-                cluster_id = 100 + int(image_assignments[i])
-                if cluster_id not in image_clusters:
-                    image_clusters[cluster_id] = []
-                image_clusters[cluster_id].append(image_path_to_data[path])
+        print("Using supervised classification for images...")
+        
+        # Group images by their predicted categories
+        for img_file in image_files:
+            # Skip files with errors
+            if 'error' in img_file:
+                continue
+                
+            # Get classification data
+            classification = img_file.get('classification', {})
+            
+            # Determine category ID based on predicted category
+            category = classification.get('category', 'unknown')
+            if not category or category == 'unknown' or 'error' in classification:
+                # Use primary label if no category mapping was found
+                category = classification.get('primary_label', 'unknown')
+            
+            # Create a consistent ID for this category
+            # Use hash of category name to create a numeric ID starting at 100
+            # This ensures the same category always gets the same ID
+            import hashlib
+            category_hash = int(hashlib.md5(category.encode()).hexdigest(), 16) % 1000
+            cluster_id = 100 + category_hash % 900  # Range 100-999
+            
+            # Add to the appropriate cluster
+            if cluster_id not in image_clusters:
+                image_clusters[cluster_id] = []
+            image_clusters[cluster_id].append(img_file)
+        
+        print(f"Classified images into {len(image_clusters)} categories")
 
     # Combine results
     all_clusters = {}

@@ -25,6 +25,7 @@ from clustering.cluster_engine import perform_clustering
 from clustering.category_namer import generate_category_names
 from organizer.policy_generator import generate_organization_policy, save_policy_to_file
 from organizer.file_reorganizer import reorganize_files, verify_organization
+from clustering.visualization import visualize_clusters
 
 
 def analyze_file(file_path: str, file_type: str) -> Dict[str, Any]:
@@ -111,6 +112,28 @@ def main():
         category_names = generate_category_names(clusters)
         clustering_time = time.time() - start_time
         print(f"Clustering complete in {clustering_time:.2f} seconds. Found {len(clusters)} categories.")
+
+        # Step 3.5: Visualize clusters if requested
+        if args.visualize:
+            print("Generating cluster visualization...")
+            try:
+                vis_output = visualize_clusters(
+                    file_features=file_features,
+                    clusters=clusters,
+                    category_names=category_names,
+                    output_path=args.vis_output,
+                    show_plot=not args.headless,
+                    method=args.vis_method
+                )
+                
+                if vis_output:
+                    print(f"Visualization saved to: {vis_output}")
+                    # If not in headless mode, wait for user to finish viewing
+                    if not args.headless:
+                        input("Press Enter to continue after viewing the visualization...")
+            except Exception as e:
+                print(f"Error generating visualization: {e}")
+                print("Continuing with organization...")
 
         # Step 4: Generate organization policy
         print("Generating organization policy...")

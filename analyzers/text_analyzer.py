@@ -200,6 +200,12 @@ def create_advanced_embedding(text: str) -> np.ndarray:
         with torch.no_grad():  # No need for gradients
             embedding = model.encode(text)
             
+        # Apply L2 normalization to make Euclidean distance work better
+        # This scales the embedding vectors to have unit norm
+        # which helps improve clustering with Euclidean distance
+        from sklearn.preprocessing import normalize
+        embedding = normalize(embedding.reshape(1, -1), norm='l2')[0]
+            
         return embedding
     except Exception as e:
         print(f"Error creating embedding: {e}")

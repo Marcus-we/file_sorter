@@ -5,8 +5,8 @@
 Image Analyzer
 
 This module provides functions for analyzing image files:
-- Feature extraction
-- Color analysis
+- Feature extraction using ResNet50
+- Image classification for automatic categorization
 - Image preprocessing
 """
 
@@ -18,6 +18,68 @@ from utils.file_utils import calculate_file_hash
 
 # Import PIL for image processing
 from PIL import Image, ImageStat
+
+# Import torch and torchvision for ResNet50
+import torch
+from torchvision.models import resnet50, ResNet50_Weights
+from torchvision import transforms
+
+# Global variables for models to avoid reloading
+_resnet_model = None
+_resnet_classifier = None
+_imagenet_labels = None
+
+
+def get_resnet_model():
+    """
+    Get or initialize the ResNet50 model for feature extraction.
+    Uses singleton pattern to avoid reloading the model.
+    
+    Returns:
+        ResNet50 model with pretrained weights v2 (feature extractor)
+    """
+    global _resnet_model
+    if _resnet_model is None:
+        print("Loading ResNet50 feature extraction model...")
+        # Use the v2 weights as specified
+        weights = ResNet50_Weights.IMAGENET1K_V2
+        _resnet_model = resnet50(weights=weights)
+        _resnet_model.eval()  # Set to evaluation mode
+        
+        # Remove the classification layer to get features
+        _resnet_model = torch.nn.Sequential(*list(_resnet_model.children())[:-1])
+        
+        # Move to GPU if available
+        if torch.cuda.is_available():
+            _resnet_model = _resnet_model.cuda()
+    
+    return _resnet_model
+
+
+def get_resnet_classifier():
+    """
+    Get or initialize the ResNet50 model for image classification.
+    Uses singleton pattern to avoid reloading the model.
+    
+    Returns:
+        ResNet50 model with pretrained weights v2 (full classifier)
+    """
+    global _resnet_classifier, _imagenet_labels
+    if _resnet_classifier is None:
+        print("Loading ResNet50 classification model...")
+        # Use the v2 weights as specified
+        weights = ResNet50_Weights.IMAGENET1K_V2
+        _resnet_classifier = resnet50(weights=weights)
+        _resnet_classifier.eval()  # Set to evaluation mode
+        
+        # Get the class labels
+        _imagenet_labels = weights.meta["categories"]
+        
+        # Move to GPU if available
+        if torch.cuda.is_available():
+            _resnet_classifier = _resnet_classifier.cuda()
+    
+    return _resnet_classifier
 
 
 def get_image_dimensions(image_path: str) -> Tuple[int, int]:
@@ -38,102 +100,44 @@ def get_image_dimensions(image_path: str) -> Tuple[int, int]:
         return (0, 0)
 
 
-def calculate_color_histogram(image_path: str, bins: int = 8) -> Dict[str, np.ndarray]:
+def preprocess_image(image_path: str) -> torch.Tensor:
     """
-    Calculates color histograms for an image.
-
-    Args:
-        image_path: Path to the image file
-        bins: Number of bins for each color channel
-
-    Returns:
-        Dictionary with RGB histogram arrays
-    """
-    try:
-        # Open the image
-        with Image.open(image_path) as img:
-            # Convert to RGB if not already
-            if img.mode != 'RGB':
-                img = img.convert('RGB')
-            
-            # Convert to numpy array
-            img_array = np.array(img)
-            
-            # Calculate histograms for each channel
-            r_hist = np.histogram(img_array[:,:,0], bins=bins, range=(0, 256))[0]
-            g_hist = np.histogram(img_array[:,:,1], bins=bins, range=(0, 256))[0]
-            b_hist = np.histogram(img_array[:,:,2], bins=bins, range=(0, 256))[0]
-            
-            # Normalize
-            r_hist = r_hist / np.sum(r_hist) if np.sum(r_hist) > 0 else r_hist
-            g_hist = g_hist / np.sum(g_hist) if np.sum(g_hist) > 0 else g_hist
-            b_hist = b_hist / np.sum(b_hist) if np.sum(b_hist) > 0 else b_hist
-            
-            return {
-                'red': r_hist,
-                'green': g_hist,
-                'blue': b_hist
-            }
-    except Exception as e:
-        print(f"Error calculating color histogram for {image_path}: {e}")
-        # Return placeholder on error
-        placeholder = np.zeros(bins)
-        return {
-            'red': placeholder,
-            'green': placeholder,
-            'blue': placeholder
-        }
-
-
-def extract_image_features(image_path: str) -> np.ndarray:
-    """
-    Extracts basic features from an image.
+    Preprocesses an image for ResNet50.
 
     Args:
         image_path: Path to the image file
 
     Returns:
-        Feature vector as a numpy array
+        Preprocessed image tensor
     """
     try:
-        # Get color histograms
-        histograms = calculate_color_histogram(image_path)
-        
-        # Get image statistics
-        with Image.open(image_path) as img:
-            if img.mode != 'RGB':
-                img = img.convert('RGB')
-            
-            stats = ImageStat.Stat(img)
-            mean_values = np.array(stats.mean)  # Mean color values
-            std_values = np.array(stats.stddev)  # Standard deviation
-            
-            # Normalize
-            mean_values = mean_values / 255.0
-            std_values = std_values / 255.0
-        
-        # Combine histograms into a single feature vector
-        features = np.concatenate([
-            histograms['red'],
-            histograms['green'],
-            histograms['blue'],
-            mean_values,
-            std_values
+        # Define preprocessing transformations
+        preprocess = transforms.Compose([
+            transforms.Resize(256),
+            transforms.CenterCrop(224),
+            transforms.ToTensor(),
+            transforms.Normalize(mean=[0.485, 0.456, 0.406], 
+                                 std=[0.229, 0.224, 0.225])
         ])
         
-        return features
+        # Open and preprocess the image
+        img = Image.open(image_path).convert('RGB')
+        img_tensor = preprocess(img)
+        img_tensor = img_tensor.unsqueeze(0)  # Add batch dimension
+        
+        # Move to GPU if available
+        if torch.cuda.is_available():
+            img_tensor = img_tensor.cuda()
+            
+        return img_tensor
     except Exception as e:
-        print(f"Error extracting image features for {image_path}: {e}")
-        # Return placeholder on error
-        return np.random.rand(8*3 + 6)  # 8 bins per channel + 6 stat values
+        print(f"Error preprocessing image {image_path}: {e}")
+        return None
 
 
 def create_advanced_image_features(image_path: str) -> np.ndarray:
     """
-    Creates more advanced image features.
-    
-    This implementation uses color statistics and histogram features.
-    For a production system, a pre-trained CNN would be more effective.
+    Creates advanced image features using ResNet50.
 
     Args:
         image_path: Path to the image file
@@ -141,9 +145,119 @@ def create_advanced_image_features(image_path: str) -> np.ndarray:
     Returns:
         Feature vector as a numpy array
     """
-    # Currently using basic features - in a full implementation
-    # this would use a pre-trained CNN for feature extraction
-    return extract_image_features(image_path)
+    try:
+        # Preprocess the image
+        img_tensor = preprocess_image(image_path)
+        if img_tensor is None:
+            # Fallback to random features if preprocessing fails
+            return np.random.rand(2048)
+        
+        # Get the model
+        model = get_resnet_model()
+        
+        # Extract features
+        with torch.no_grad():  # No need for gradients
+            features = model(img_tensor)
+        
+        # Reshape and convert to numpy array
+        features = features.squeeze().cpu().numpy()
+        
+        return features
+    except Exception as e:
+        print(f"Error extracting ResNet50 features for {image_path}: {e}")
+        # Return random features as a fallback
+        return np.random.rand(2048)
+
+
+def classify_image(image_path: str) -> Dict[str, Any]:
+    """
+    Classifies an image using ResNet50 with ImageNet classes.
+
+    Args:
+        image_path: Path to the image file
+
+    Returns:
+        Dictionary with classification results
+    """
+    try:
+        # Preprocess the image
+        img_tensor = preprocess_image(image_path)
+        if img_tensor is None:
+            return {"error": "Failed to preprocess image"}
+        
+        # Get the classifier model
+        model = get_resnet_classifier()
+        global _imagenet_labels
+        
+        # Perform classification
+        with torch.no_grad():
+            outputs = model(img_tensor)
+            probabilities = torch.nn.functional.softmax(outputs, dim=1)[0]
+        
+        # Get top 5 predictions
+        top5_prob, top5_indices = torch.topk(probabilities, 5)
+        top5_prob = top5_prob.cpu().numpy()
+        top5_indices = top5_indices.cpu().numpy()
+        
+        # Create classification results
+        top_predictions = []
+        for i, (prob, idx) in enumerate(zip(top5_prob, top5_indices)):
+            label = _imagenet_labels[idx]
+            top_predictions.append({
+                "label": label,
+                "probability": float(prob),
+                "rank": i + 1
+            })
+        
+        # Create broad category
+        # Map common ImageNet classes to broader categories
+        broad_category = determine_broad_category(top_predictions)
+        
+        return {
+            "top_predictions": top_predictions,
+            "primary_label": top_predictions[0]["label"],
+            "confidence": float(top_predictions[0]["probability"]),
+            "category": broad_category
+        }
+    except Exception as e:
+        print(f"Error classifying image {image_path}: {e}")
+        return {"error": str(e)}
+
+
+def determine_broad_category(predictions: List[Dict[str, Any]]) -> str:
+    """
+    Determines a broad category for the image based on its top predictions.
+
+    Args:
+        predictions: List of top prediction dictionaries
+
+    Returns:
+        Broad category name
+    """
+    # Define category mappings (common ImageNet classes -> broad categories)
+    category_mappings = {
+        "vehicle": ["car", "truck", "bicycle", "motorcycle", "bus", "train", "airplane", "boat", "van"],
+        "animal": ["dog", "cat", "bird", "fish", "horse", "elephant", "bear", "lion", "tiger", "monkey"],
+        "person": ["person", "man", "woman", "child", "boy", "girl", "baby"],
+        "sport": ["ball", "sports ball", "football", "soccer", "tennis", "baseball", "basketball", "golf"],
+        "food": ["food", "fruit", "vegetable", "dish", "meal", "pizza", "hamburger", "cake"],
+        "landscape": ["mountain", "beach", "forest", "lake", "river", "ocean", "sky"],
+        "building": ["house", "building", "tower", "church", "castle", "bridge"],
+        "object": ["bottle", "cup", "chair", "table", "phone", "computer", "book"]
+    }
+    
+    # Check top predictions against categories
+    for prediction in predictions:
+        label = prediction["label"].lower()
+        
+        # Check if any keywords from our category mappings are in the label
+        for category, keywords in category_mappings.items():
+            for keyword in keywords:
+                if keyword in label:
+                    return category
+    
+    # If no specific category matched, use the first prediction's class
+    return predictions[0]["label"]
 
 
 def analyze_image_file(file_path: str) -> Dict[str, Any]:
@@ -163,11 +277,11 @@ def analyze_image_file(file_path: str) -> Dict[str, Any]:
         # Get image dimensions
         width, height = get_image_dimensions(file_path)
 
-        # Extract basic features
-        color_features = extract_image_features(file_path)
-        
-        # Extract advanced features
+        # Extract advanced features using ResNet50
         advanced_features = create_advanced_image_features(file_path)
+        
+        # Classify the image
+        classification = classify_image(file_path)
 
         # Calculate a file hash for uniqueness checking
         file_hash = calculate_file_hash(file_path)
@@ -178,9 +292,9 @@ def analyze_image_file(file_path: str) -> Dict[str, Any]:
             'file_size': file_size,
             'dimensions': (width, height),
             'aspect_ratio': width / height if height != 0 else 0,
-            'color_features': color_features.tolist() if isinstance(color_features, np.ndarray) else color_features,
             'file_hash': file_hash,
-            'advanced_features': advanced_features.tolist() if isinstance(advanced_features, np.ndarray) else advanced_features
+            'advanced_features': advanced_features.tolist() if isinstance(advanced_features, np.ndarray) else advanced_features,
+            'classification': classification
         }
 
     except Exception as e:

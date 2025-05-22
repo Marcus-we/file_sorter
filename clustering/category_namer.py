@@ -161,128 +161,213 @@ def extract_image_characteristics(cluster_files: List[Dict[str, Any]]) -> Dict[s
     }
 
 
-def generate_text_category_name(cluster_files: List[Dict[str, Any]]) -> str:
+def generate_text_category_name(files: List[Dict[str, Any]], cluster_id: int) -> str:
     """
-    Generates a category name for a cluster of text files.
+    Generates a name for a text category based on keywords and file properties.
 
     Args:
-        cluster_files: List of file data dictionaries in the cluster
+        files: List of file data for this cluster
+        cluster_id: ID of the cluster
 
     Returns:
-        Category name string
+        Category name
     """
-    # Extract common keywords
-    keywords = extract_common_keywords_from_text_cluster(cluster_files)
-    
-    # If not enough keywords, try extracting from filenames
-    if len(keywords) < 2:
-        filename_words = extract_common_words_from_filenames(cluster_files)
-        keywords.extend([w for w in filename_words if w not in keywords])
-        keywords = keywords[:5]  # Limit to 5 keywords
-
-    # Extract common extensions
-    extensions = extract_common_extensions(cluster_files)
-
-    # Generate name based on keywords and extensions
-    if keywords:
-        # Use the top keywords to form a name
-        if len(keywords) >= 2:
-            name = f"{keywords[0].capitalize()} {keywords[1].capitalize()}"
-        else:
-            name = keywords[0].capitalize()
-
-        # Add document type if we have extensions
-        doc_extensions = {'.doc', '.docx', '.pdf', '.txt', '.rtf', '.odt'}
-        code_extensions = {'.py', '.js', '.java', '.cpp', '.c', '.html', '.css', '.php'}
-        data_extensions = {'.csv', '.json', '.xml', '.yaml', '.yml', '.sql'}
-        
-        if extensions and any(ext in doc_extensions for ext in extensions):
-            name += " Documents"
-        elif extensions and any(ext in code_extensions for ext in extensions):
-            # Try to detect programming language
-            if '.py' in extensions:
-                name += " Python"
-            elif '.js' in extensions:
-                name += " JavaScript"
-            elif '.java' in extensions:
-                name += " Java"
-            elif '.cpp' in extensions or '.c' in extensions:
-                name += " C/C++"
-            elif '.html' in extensions or '.css' in extensions:
-                name += " Web"
-            else:
-                name += " Code"
-        elif extensions and any(ext in data_extensions for ext in extensions):
-            name += " Data"
-
-        return name
-
-    # Check for content patterns if no good keywords
+    # Extract keywords from all files in the cluster
+    all_keywords = []
+    extensions = []
     word_counts = []
-    for file_data in cluster_files:
-        if file_data.get('content_type') == 'text' and 'word_count' in file_data:
-            word_counts.append(file_data['word_count'])
+    line_counts = []
     
-    if word_counts:
-        avg_word_count = sum(word_counts) / len(word_counts)
-        if avg_word_count > 1000:
-            return "Long Documents"
-        elif avg_word_count < 100:
-            return "Short Notes"
+    for file_data in files:
+        # Get keywords
+        keywords = file_data.get('keywords', [])
+        if keywords:
+            all_keywords.extend(keywords)
+        
+        # Get file extension
+        file_path = file_data.get('file_path', '')
+        if file_path:
+            ext = os.path.splitext(file_path)[1].lower()
+            if ext:
+                extensions.append(ext)
+        
+        # Get word and line counts
+        word_count = file_data.get('word_count', 0)
+        if word_count:
+            word_counts.append(word_count)
+            
+        line_count = file_data.get('line_count', 0)
+        if line_count:
+            line_counts.append(line_count)
     
-    # Fallback to extension-based naming
-    if extensions:
-        ext = extensions[0].replace('.', '').upper()
-        return f"{ext} Files"
+    # Count occurrences of each keyword and extension
+    keyword_counts = Counter(all_keywords)
+    extension_counts = Counter(extensions)
+    
+    # Get average word and line count
+    avg_word_count = sum(word_counts) / len(word_counts) if word_counts else 0
+    avg_line_count = sum(line_counts) / len(line_counts) if line_counts else 0
+    
+    # Determine most common extension
+    most_common_ext = extension_counts.most_common(1)[0][0] if extension_counts else ""
+    if most_common_ext.startswith('.'):
+        most_common_ext = most_common_ext[1:].upper()
+    
+    # Get common keywords (exclude very generic terms)
+    stopwords = {'the', 'a', 'an', 'and', 'or', 'but', 'if', 'then', 'else', 'when',
+                'at', 'from', 'by', 'for', 'with', 'about', 'against', 'between',
+                'into', 'through', 'during', 'before', 'after', 'above', 'below',
+                'to', 'of', 'in', 'on', 'this', 'that', 'these', 'those', 'it',
+                'function', 'class', 'method', 'return', 'true', 'false', 'null',
+                'none', 'undefined', 'import', 'export', 'as', 'from', 'try', 'catch'}
+    
+    filtered_keywords = [kw for kw, count in keyword_counts.items() 
+                      if kw.lower() not in stopwords and len(kw) > 2]
+    
+    # Determine content type descriptor based on extension and keywords
+    content_descriptor = ""
+    code_extensions = {'.py', '.js', '.java', '.cpp', '.c', '.h', '.cs', '.php', '.go', '.rb', '.swift'}
+    doc_extensions = {'.txt', '.md', '.doc', '.docx', '.rtf', '.pdf', '.odt'}
+    data_extensions = {'.csv', '.json', '.xml', '.yaml', '.yml', '.ini', '.conf', '.cfg'}
+    
+    if most_common_ext:
+        if any(ext in code_extensions for ext in extension_counts):
+            # Code files
+            code_keywords = {'function', 'class', 'method', 'import', 'variable', 'const', 'return', 'if', 'for', 'while'}
+            if any(kw.lower() in code_keywords for kw in all_keywords):
+                content_descriptor = f"{most_common_ext} Code"
+            else:
+                content_descriptor = f"{most_common_ext} Files"
+        elif any(ext in doc_extensions for ext in extension_counts):
+            # Text documents
+            if avg_word_count > 500:
+                content_descriptor = "Documents"
+            else:
+                content_descriptor = "Notes"
+        elif any(ext in data_extensions for ext in extension_counts):
+            content_descriptor = "Data Files"
+        else:
+            content_descriptor = f"{most_common_ext} Files"
+    else:
+        content_descriptor = "Text Files"
+    
+    # Generate the final name
+    if filtered_keywords:
+        # Use top keywords for naming
+        top_keywords = [kw.title() for kw in filtered_keywords[:2]]
+        section_name = " ".join(top_keywords)
+        return f"{section_name} {content_descriptor} ({len(files)})"
+    else:
+        # Fallback to generic section name
+        return f"Section {cluster_id} {content_descriptor} ({len(files)})"
 
-    # Last resort
-    return "Text Files"
 
-
-def generate_image_category_name(cluster_files: List[Dict[str, Any]]) -> str:
+def generate_image_category_name(files: List[Dict[str, Any]], cluster_id: int) -> str:
     """
-    Generates a category name for a cluster of image files.
+    Generates a name for an image category based on supervised classification results.
 
     Args:
-        cluster_files: List of file data dictionaries in the cluster
+        files: List of file data for this cluster
+        cluster_id: ID of the cluster
 
     Returns:
-        Category name string
+        Category name
     """
-    # Extract image characteristics
-    characteristics = extract_image_characteristics(cluster_files)
-
-    # Extract common extensions
-    extensions = extract_common_extensions(cluster_files)
-
-    # Generate name based on characteristics
-    name_parts = []
-
-    # Add orientation if available
-    if characteristics['orientation'] != 'unknown':
-        name_parts.append(characteristics['orientation'].capitalize())
-
-    # Add image type based on extension
-    if extensions:
-        if extensions[0] in ['.jpg', '.jpeg']:
-            name_parts.append("Photos")
-        elif extensions[0] == '.png':
-            name_parts.append("PNG Images")
-        elif extensions[0] == '.gif':
-            name_parts.append("GIFs")
-        elif extensions[0] in ['.svg', '.eps', '.ai']:
-            name_parts.append("Vector Graphics")
-        else:
-            name_parts.append("Images")
+    # Collect all classifications from files in this cluster
+    categories = []
+    labels = []
+    
+    for file_data in files:
+        # Get classification data
+        classification = file_data.get('classification', {})
+        if not classification or 'error' in classification:
+            continue
+            
+        # Get category and top label
+        category = classification.get('category', '')
+        primary_label = classification.get('primary_label', '')
+        
+        if category:
+            categories.append(category)
+        if primary_label:
+            labels.append(primary_label)
+    
+    # Count occurrences of each category and label
+    category_counts = Counter(categories)
+    label_counts = Counter(labels)
+    
+    # Get the most common category and label
+    most_common_category = category_counts.most_common(1)[0][0] if category_counts else "Unknown"
+    most_common_labels = [label for label, count in label_counts.most_common(2)]
+    
+    # Determine image shape characteristics
+    aspect_ratios = [f.get('aspect_ratio', 1.0) for f in files if 'aspect_ratio' in f]
+    avg_aspect_ratio = sum(aspect_ratios) / len(aspect_ratios) if aspect_ratios else 1.0
+    
+    # Determine if images are likely landscape or portrait
+    shape_descriptor = ""
+    if avg_aspect_ratio > 1.2:
+        shape_descriptor = "Landscape"
+    elif avg_aspect_ratio < 0.8:
+        shape_descriptor = "Portrait"
     else:
-        name_parts.append("Images")
+        shape_descriptor = "Square"
+    
+    # Get file extensions
+    extensions = [os.path.splitext(f.get('file_path', ''))[1].lower() for f in files]
+    extension_counts = Counter(extensions)
+    most_common_ext = extension_counts.most_common(1)[0][0] if extension_counts else ""
+    
+    # Remove the dot from extension
+    if most_common_ext.startswith('.'):
+        most_common_ext = most_common_ext[1:].upper()
+    
+    # Combine information into a meaningful name
+    if most_common_category.lower() != "unknown":
+        # If we have a good category, use it
+        if most_common_labels and most_common_labels[0].lower() not in most_common_category.lower():
+            # Include the most common label if it adds information
+            return f"{most_common_category.title()} {most_common_labels[0].title()} {most_common_ext} Images ({len(files)})"
+        else:
+            return f"{most_common_category.title()} {most_common_ext} Images ({len(files)})"
+    elif most_common_labels:
+        # Fall back to labels if no good category
+        return f"{most_common_labels[0].title()} {most_common_ext} Images ({len(files)})"
+    else:
+        # Last resort
+        return f"{shape_descriptor} {most_common_ext} Images ({len(files)})"
 
-    # Combine name parts
-    if name_parts:
-        return " ".join(name_parts)
 
-    # Fallback
-    return "Image Files"
+def generate_category_names(clusters: Dict[int, List[Dict[str, Any]]]) -> Dict[int, str]:
+    """
+    Generates human-readable names for file clusters.
+
+    Args:
+        clusters: Dictionary mapping cluster IDs to lists of file data
+
+    Returns:
+        Dictionary mapping cluster IDs to category names
+    """
+    category_names = {}
+    
+    for cluster_id, files in clusters.items():
+        if not files:
+            continue
+            
+        # Determine if this is a text or image cluster
+        content_type = files[0].get('content_type', 'unknown')
+        
+        if content_type == 'text':
+            # For text clusters, use existing keyword-based naming
+            category_names[cluster_id] = generate_text_category_name(files, cluster_id)
+        elif content_type == 'image':
+            # For image clusters, use the classification results
+            category_names[cluster_id] = generate_image_category_name(files, cluster_id)
+        else:
+            # Fallback for other content types
+            category_names[cluster_id] = f"Other Files ({len(files)})"
+    
+    return category_names
 
 
 def generate_other_category_name(cluster_files: List[Dict[str, Any]]) -> str:
@@ -305,68 +390,3 @@ def generate_other_category_name(cluster_files: List[Dict[str, Any]]) -> str:
 
     # Fallback
     return "Other Files"
-
-
-def generate_category_names(clusters: Dict[int, List[Dict[str, Any]]]) -> Dict[int, str]:
-    """
-    Generates meaningful category names for all clusters.
-
-    Args:
-        clusters: Dictionary mapping cluster IDs to lists of file data
-
-    Returns:
-        Dictionary mapping cluster IDs to category names
-    """
-    category_names = {}
-
-    for cluster_id, cluster_files in clusters.items():
-        if not cluster_files:
-            category_names[cluster_id] = f"Category {cluster_id}"
-            continue
-
-        # Determine predominant content type
-        text_count = sum(1 for f in cluster_files if f.get('content_type') == 'text')
-        image_count = sum(1 for f in cluster_files if f.get('content_type') == 'image')
-        other_count = len(cluster_files) - text_count - image_count
-
-        # Generate name based on predominant type
-        if text_count >= image_count and text_count >= other_count:
-            category_names[cluster_id] = generate_text_category_name(cluster_files)
-        elif image_count >= text_count and image_count >= other_count:
-            category_names[cluster_id] = generate_image_category_name(cluster_files)
-        else:
-            category_names[cluster_id] = generate_other_category_name(cluster_files)
-            
-        # Add file count for context
-        file_count = len(cluster_files)
-        category_names[cluster_id] += f" ({file_count})"
-
-    # Ensure no duplicate names
-    ensure_unique_names(category_names)
-
-    return category_names
-
-
-def ensure_unique_names(category_names: Dict[int, str]) -> None:
-    """
-    Ensures all category names are unique by appending numbers if needed.
-
-    Args:
-        category_names: Dictionary mapping cluster IDs to category names
-
-    Note: Modifies the dictionary in-place
-    """
-    # Count occurrences of each name
-    name_counts = Counter(category_names.values())
-
-    # Collect IDs that need to be renamed
-    conflicts = {name: [] for name, count in name_counts.items() if count > 1}
-    for cluster_id, name in category_names.items():
-        if name in conflicts:
-            conflicts[name].append(cluster_id)
-
-    # Rename conflicting categories
-    for name, cluster_ids in conflicts.items():
-        for i, cluster_id in enumerate(cluster_ids):
-            if i > 0:  # Leave the first occurrence as is
-                category_names[cluster_id] = f"{name} {i+1}"
