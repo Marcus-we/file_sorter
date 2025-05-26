@@ -98,5 +98,3 @@ An advanced file organization system that automatically analyzes and sorts files
 - **RAM**: Minimum 4GB, recommended 8GB+
 - **Storage**: 2GB free space for models and processing
 - **OS**: Windows, macOS, or Linux
-
-### Dependencies
