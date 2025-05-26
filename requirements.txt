@@ -7,6 +7,8 @@ sentence-transformers>=2.2.2
 transformers>=4.30.0
 torch>=2.0.0
 torchvision>=0.15.0
+hdbscan>=0.8.29
+matplotlib>=3.5.0
+seaborn>=0.11.0
 # Optional, add if needed:
-# matplotlib>=3.5.0
 # gensim>=4.1.2  # Alternative to transformers for text analysis 

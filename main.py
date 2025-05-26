@@ -21,8 +21,8 @@ from utils.cli_utils import parse_args, display_organization_plan, get_user_conf
 # Uncommented these imports
 from analyzers.text_analyzer import analyze_text_file
 from analyzers.image_analyzer import analyze_image_file
-from clustering.cluster_engine import perform_clustering
-from clustering.category_namer import generate_category_names
+from clustering.enhanced_cluster_engine import perform_enhanced_clustering
+from clustering.enhanced_category_namer import generate_enhanced_category_names
 from organizer.policy_generator import generate_organization_policy, save_policy_to_file
 from organizer.file_reorganizer import reorganize_files, verify_organization
 from clustering.visualization import visualize_clusters
@@ -103,13 +103,13 @@ def main():
         # Step 3: Cluster files
         print("Clustering files...")
         start_time = time.time()
-        clusters = perform_clustering(file_features)
+        clusters = perform_enhanced_clustering(file_features)
         
         if not clusters:
             print("Clustering failed or no meaningful clusters were found.")
             return 1
             
-        category_names = generate_category_names(clusters)
+        category_names = generate_enhanced_category_names(clusters)
         clustering_time = time.time() - start_time
         print(f"Clustering complete in {clustering_time:.2f} seconds. Found {len(clusters)} categories.")
 
